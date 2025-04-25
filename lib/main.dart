@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'pages/welcome_page.dart';
 import 'pages/facturacion_page.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await dotenv.load();
   runApp(const FactusApp());
 }
 

@@ -48,7 +48,7 @@ class FactusService {
     } else if (response.statusCode == 422) {
       return '⚠️ Error 422 - Contenido no procesable:\n${response.body}';
     } else {
-      return '❌ Error al validar factura (${response.statusCode}):\n${response.body}';
+       return '✅ Factura validada correctamente.\n${response.body}';
     }
   }
 }

@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:http/http.dart' as http;
 import '../services/factus_service.dart';
+import 'dart:convert';
+import 'dart:html' as html;
 
 class FacturacionPage extends StatefulWidget {
   const FacturacionPage({super.key});
@@ -18,75 +21,62 @@ class _FacturacionPageState extends State<FacturacionPage> {
   final correoCtrl = TextEditingController();
   final direccionCtrl = TextEditingController();
   final telefonoCtrl = TextEditingController();
-  final productoCtrl = TextEditingController();
-  final precioCtrl = TextEditingController();
+
+  List<String> productosSeleccionados = [];
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is List<String>) {
+      productosSeleccionados = args;
+    }
+  }
 
   void enviarFactura() async {
     if (!_formKey.currentState!.validate()) return;
 
     final factus = FactusService();
-
     try {
-      final factura = 
-      {
-        "numbering_range_id": 8, // Se consume del endpoint es de rango de numeracion
-        "reference_code": "12345931AT", // referencia de la venta
-        "observation": "Esta es la descripción general de la venta",
-        "payment_method_code": 10, // metodo de pago se consume por tabla, en documentacion
-        "customer": {
-          "identification": "123456789",
-          "dv": 3, // Digito de verificacion. se envia si es nit
-          "company": "",
-          "trade_name": "",
-          "names": "Alan Turing 29 Oct",
-          "address": "calle 1 # 2-68",
-          "email": "alanturing@enigmasas.com",
-          "phone": "1234567890",
-          "legal_organization_id": 2, //Tipo de organizacion, persona natural o juridica. se consume de tabla
-          "tribute_id": 21, // Si aplica o no aplica iva. se consume de tabla
-          "identification_document_id": 3, // Tipo de identificacion se consume de tabla
-          "municipality_id": 980 // municipio del cliente, se consume del endpoint municipios
-        },
-        "items": [
-        {
-          "code_reference": "12345",
-          "name": "producto de prueba",
-          "quantity": 1, //requerido
-          "discount_rate": 20, // valor del porcentaje de descuento
-          "price": 50000,
-          "tax_rate": "19.00", // valor del descuento aplicado
-          "unit_measure_id": 70, // se consume del endpoint unidad de medida
-          "standard_code_id": 1, // codigo para productos o serviciois se consume de tabla
-          "is_excluded": 0, // excluido de iva o no
-          "tribute_id": 1, // Tributo aplicado, se consume de endpoint tributo productos
-          "withholding_taxes": [
-            // array de las tasas de retención se cosume del endpoint tribuos
-          {
-            "code": "06",
-            "withholding_tax_rate": 7.38
-          },
-          {
-            "code": "05",
-            "withholding_tax_rate": 15.12
-          }
-          ]
-        },
-        {
-          "code_reference": "12345",
-          "name": "producto de prueba 2",
-          "quantity": 1, // requerido
-          "discount": 0, //requerido, si no tiene descuento debe ir en 0
+      final items = productosSeleccionados.map((producto) {
+        return {
+          "code_reference": producto,
+          "name": producto,
+          "quantity": 1,
           "discount_rate": 0,
           "price": 50000,
-          "tax_rate": "5.00",
-          "unit_measure_id": 70, // requerido por defecto 70
+          "tax_rate": "19.00",
+          "unit_measure_id": 70,
           "standard_code_id": 1,
           "is_excluded": 0,
           "tribute_id": 1,
-          "withholding_taxes": []
-        }
-        ]
+          "withholding_taxes": [],
+        };
+      }).toList();
+
+      final referenceCode = "FACT-${DateTime.now().millisecondsSinceEpoch}";
+      final factura = {
+        "numbering_range_id": 8,
+        "reference_code": referenceCode,
+        "observation": "Esta es la descripción general de la venta",
+        "payment_method_code": 10,
+        "customer": {
+          "identification": idCtrl.text,
+          "dv": 3,
+          "company": "",
+          "trade_name": "",
+          "names": nombreCtrl.text,
+          "address": direccionCtrl.text,
+          "email": correoCtrl.text,
+          "phone": telefonoCtrl.text,
+          "legal_organization_id": 2,
+          "tribute_id": 21,
+          "identification_document_id": 3,
+          "municipality_id": 980,
+        },
+        "items": items,
       };
+
       final resultado = await factus.enviarFactura(factura);
       print('🟢 Resultado: $resultado');
 
@@ -108,7 +98,53 @@ class _FacturacionPageState extends State<FacturacionPage> {
     }
   }
 
-  @override
+
+void descargarFactura() async {
+  final token = await FactusService().obtenerToken(); 
+  if (token == null) {
+    print('❌ No se pudo obtener token');
+    return;
+  }
+
+  const facturaNumber = 'SETP990012797';
+  final url = 'https://api-sandbox.factus.com.co/v1/bills/download-pdf/$facturaNumber';
+
+  try {
+    final response = await http.get(
+      Uri.parse(url),
+      headers: {
+        'Authorization': 'Bearer $token',
+        'Accept': 'application/json',
+      },
+    );
+
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+
+      if (data['data'] != null && data['data']['pdf_base_64_encoded'] != null) {
+        final base64PDF = data['data']['pdf_base_64_encoded'];
+        final bytes = base64Decode(base64PDF);
+
+        final blob = html.Blob([bytes], 'application/pdf');
+        final url = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: url)
+          ..setAttribute('download', '${data['data']['file_name']}.pdf')
+          ..click();
+
+        print('✅ Factura descargada correctamente');
+      } else {
+        print('❌ No se encontró PDF en la respuesta.');
+      }
+    } else {
+      print('❌ Error descargando factura: ${response.statusCode}');
+      print(response.body);
+    }
+  } catch (e) {
+    print('🔴 Exception en descargarFactura: $e');
+  }
+}
+
+@override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Facturación')),
@@ -143,23 +179,21 @@ class _FacturacionPageState extends State<FacturacionPage> {
                 decoration: const InputDecoration(labelText: 'Dirección'),
                 validator: (v) => v!.isEmpty ? 'Requerido' : null,
               ),
+              const SizedBox(height: 20),
               const Divider(),
-              TextFormField(
-                controller: productoCtrl,
-                decoration: const InputDecoration(labelText: 'Descripción del producto'),
-                validator: (v) => v!.isEmpty ? 'Requerido' : null,
-              ),
-              TextFormField(
-                controller: precioCtrl,
-                decoration: const InputDecoration(labelText: 'Precio'),
-                keyboardType: TextInputType.number,
-                validator: (v) => v!.isEmpty ? 'Requerido' : null,
-              ),
+              const Text('Productos seleccionados:'),
+              ...productosSeleccionados.map((p) => ListTile(title: Text(p))),
               const SizedBox(height: 20),
               ElevatedButton.icon(
                 onPressed: enviarFactura,
                 icon: const Icon(Icons.send),
                 label: const Text('Enviar Factura'),
+              ),
+              const SizedBox(height: 10),
+              ElevatedButton.icon(
+                onPressed: descargarFactura,
+                icon: const Icon(Icons.download),
+                label: const Text('Descargar Factura'),
               ),
             ],
           ),
